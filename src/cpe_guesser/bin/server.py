@@ -3,73 +3,94 @@
 
 import json
 import sys
+from typing import Any
 from wsgiref.simple_server import make_server
 
 import falcon
+import valkey
 from dynaconf import Dynaconf
 
-from cpe_guesser import CPEGuesser
+from cpe_guesser.db import Db
 
-# Configuration
+# API Configuration
 settings = Dynaconf(settings_files=["../config/settings.yaml"])
 port = settings.get("server.port", 8000)
+
+# Database Configuration
+settings = Dynaconf(settings_files=["../config/settings.yaml"])
+valkey_host = settings.get("valkey.host", "127.0.0.1")
+valkey_port = settings.get("valkey.port", 6666)
+valkey_db = settings.get("valkey.db", 8)
+
+vdb = valkey.Valkey(
+    host=valkey_host, port=valkey_port, db=valkey_db, decode_responses=True
+)
+
+db = Db(vdb)
+
+
+def api_error(msg: str) -> dict:
+    return {"error": msg}
 
 
 class Search:
     def on_post(self, req, resp):
         data_post = req.bounded_stream.read()
         js = data_post.decode("utf-8")
+
         try:
-            q = json.loads(js)
+            q: dict[str, Any] = json.loads(js)
         except ValueError:
             resp.status = falcon.HTTP_400
-            resp.media = "Missing query array or incorrect JSON format"
+            resp.media = api_error("expecting json data")
             return
 
-        if "query" in q:
-            pass
-        else:
+        if not isinstance(q, dict):
             resp.status = falcon.HTTP_400
-            resp.media = "Missing query array or incorrect JSON format"
+            resp.media = api_error("expecting data to be a json object")
             return
 
-        cpeGuesser = CPEGuesser()
-        resp.media = cpeGuesser.guessCpe(q["query"])
+        keywords: list[str] = q["query"] if "query" in q else []
+        vendor: str | None = q["vendor"] if "vendor" in q else None
+        product: str | None = q["product"] if "product" in q else None
+        limit: int = q["limit"] if "limit" in q else 10
 
-
-class Unique:
-    def on_post(self, req, resp):
-        data_post = req.bounded_stream.read()
-        js = data_post.decode("utf-8")
-        try:
-            q = json.loads(js)
-        except ValueError:
+        if not isinstance(keywords, list):
             resp.status = falcon.HTTP_400
-            resp.media = "Missing query array or incorrect JSON format"
+            resp.media = api_error("keywords must be a list")
             return
 
-        if "query" in q:
-            pass
-        else:
+        if not all((isinstance(k, str) for k in keywords)):
             resp.status = falcon.HTTP_400
-            resp.media = "Missing query array or incorrect JSON format"
+            resp.media = api_error("keywords must all be strings")
             return
 
-        cpeGuesser = CPEGuesser()
-        cpes = cpeGuesser.guessCpe(q["query"])[:1][0][1]
+        if vendor is not None and not isinstance(vendor, str):
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("vendor must be a string")
+            return
 
-        r = []
-        if len(cpes) > 0:
-            if len(cpes[0]) >= 2:
-                r = cpes[0][1]
+        if product is not None and not isinstance(product, (str, None)):
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("product must be a string")
+            return
 
-        resp.media = r
+        if limit is not None and not isinstance(limit, int):
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("limit must be an integer")
+            return
+
+        resp.media = db.search_abritrary_text(
+            "\n".join(keywords),
+            vendor=vendor,
+            product=product,
+            limit=limit,
+        )
 
 
 def main():
     app = falcon.App()
     app.add_route("/search", Search())
-    app.add_route("/unique", Unique())
 
     try:
         with make_server("", port, app) as httpd:

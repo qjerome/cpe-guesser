@@ -8,7 +8,10 @@ import valkey
 from dynaconf import Dynaconf
 from valkey.client import Valkey
 
-from cpe_guesser.cpeimport import CPEDownloader, NVDCPEHandler, XMLCPEHandler
+from cpe_guesser.cpeimport.downloader import CPEDownloader
+from cpe_guesser.cpeimport.reader import CPEReader
+from cpe_guesser.cpeimport.reader.nvd_json import NVDCPEReader
+from cpe_guesser.db import Db
 
 
 def dbsize(rdb: Valkey) -> int:
@@ -82,16 +85,24 @@ def main():
     _, ext = os.path.splitext(cpe_file)
     ext = ext.lower()
     if ext == ".tar" or ext == ".json":
-        handler = NVDCPEHandler(rdb)
-    elif ext == ".xml":
-        handler = XMLCPEHandler(rdb)
+        with Db(rdb) as db:
+            processed: set[str] = set()
+            reader: CPEReader = NVDCPEReader(cpe_file)
+            n_cpes = 0
+            for cpe in reader.read_cpes():
+                if reader.processing_file not in processed:
+                    db.commit()
+                    if n_cpes != 0:
+                        print(f"{n_cpes} CPEs in database")
+                    print(f"processing: {reader.processing_file}")
+                    if reader.processing_file is not None:
+                        processed.add(reader.processing_file)
+                db.insert_pipeline(cpe)
+                n_cpes += 1
+            db.commit()
     else:
         print(f"Error! No handler for the file type of {cpe_file}")
         sys.exit(1)
-
-    print(f"Using {handler.__class__.__name__} to parse file {cpe_file}...")
-    label = f"{handler.__class__.__name__}[{os.path.basename(cpe_file)}]"
-    handler.parse_file(cpe_file, label=label)
 
     print(f"Done! {rdb.dbsize()} keys inserted.")
 
