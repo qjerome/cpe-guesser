@@ -33,7 +33,47 @@ def api_error(msg: str) -> dict:
     return {"error": msg}
 
 
-class Search:
+class SearchV1:
+    def on_post(self, req, resp):
+        data_post = req.bounded_stream.read()
+        js = data_post.decode("utf-8")
+
+        try:
+            q: dict[str, Any] = json.loads(js)
+        except ValueError:
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("expecting json data")
+            return
+
+        if not isinstance(q, dict):
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("expecting data to be a json object")
+            return
+
+        keywords: list[str] = q["query"] if "query" in q else []
+        limit: int | None = q["limit"] if "limit" in q else None
+
+        if not isinstance(keywords, list):
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("keywords must be a list")
+            return
+
+        if not all((isinstance(k, str) for k in keywords)):
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("keywords must all be strings")
+            return
+
+        if limit is not None and not isinstance(limit, int):
+            resp.status = falcon.HTTP_400
+            resp.media = api_error("limit must be an integer")
+            return
+
+        r = db.v1_guess_cpe(keywords, limit=limit)
+
+        resp.media = r
+
+
+class SearchV2:
     def on_post(self, req, resp):
         data_post = req.bounded_stream.read()
         js = data_post.decode("utf-8")
@@ -90,7 +130,8 @@ class Search:
 
 def main():
     app = falcon.App()
-    app.add_route("/search", Search())
+    app.add_route("/v1/search", SearchV1())
+    app.add_route("/v2/search", SearchV2())
 
     try:
         with make_server("", port, app) as httpd:
