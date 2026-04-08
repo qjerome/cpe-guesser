@@ -298,7 +298,7 @@ class Db:
         try_exact_vendor=True,
         # product may contain version information
         try_exact_product=False,
-    ) -> list[tuple[str, int]]:
+    ) -> list[tuple[int, str]]:
 
         if len(text) == 0:
             if vendor is not None and product is not None:
@@ -394,7 +394,8 @@ class Db:
         results = sorted(filter(lambda x: x[1] > 0, cpes.items()), key=lambda x: -x[1])
         if limit is not None:
             results = results[:limit]
-        return list(map(lambda x: (x[0].to_cpe_str(), x[1]), results))
+        # we return the same format as v1
+        return list(map(lambda x: (x[1], x[0].to_cpe_str()), results))
 
     def commit(self):
         self.pipeline.execute()
