@@ -6,6 +6,34 @@ from valkey.client import Pipeline
 from cpe_guesser.cpe import CPE, TOKENIZE_RE
 
 
+def tokenize_text(text: str) -> list[str]:
+    """
+    Tokenizes text into words by splitting on whitespace and punctuation.
+
+    This function splits the input text into tokens using whitespace and punctuation
+    as delimiters, and filters out empty strings.
+
+    Args:
+        text: The input text to tokenize.
+
+    Returns:
+        A list of tokens (words) from the input text.
+
+    Example:
+        >>> tokenize_text("Hello, World! This is a test.")
+        ['Hello', 'World', 'This', 'is', 'a', 'test']
+
+        >>> tokenize_text("Python-3.9 and Rust")
+        ['Python', '3', '9', 'and', 'Rust']
+    """
+    return list(
+        filter(
+            lambda x: len(x) > 0,
+            TOKENIZE_RE.split(text),
+        )
+    )
+
+
 def tokenize_text_lower(text: str) -> list[str]:
     """
     Tokenizes text into lowercase words, splitting on whitespace and punctuation.
@@ -26,12 +54,25 @@ def tokenize_text_lower(text: str) -> list[str]:
         >>> tokenize_text_lower("Python-3.9 and Rust")
         ['python', '3', '9', 'and', 'rust']
     """
-    return list(
-        filter(
-            lambda x: len(x) > 0,
-            TOKENIZE_RE.split(text.lower()),
-        )
-    )
+    return tokenize_text(text.lower())
+
+
+def find_upper_keywords_chains(tokens: list[str]) -> list[list[str]]:
+    cap_kw: list[str] = []
+    cap_kw_chains: list[list[str]] = []
+
+    for i, t in enumerate(tokens):
+        if len(t) > 0:
+            if t[0].isupper():
+                cap_kw.append(t)
+                continue
+            else:
+                # don't need to take one word chain
+                if len(cap_kw) > 1:
+                    cap_kw_chains.append(cap_kw)
+                    cap_kw = []
+
+    return cap_kw_chains
 
 
 def is_tokenized_full_match(
@@ -217,12 +258,19 @@ class Db:
             else:
                 return []
 
-        text = text.lower()
-        # low_keywords = set(k for k in tokenize_text(text)])
+        tokens = tokenize_text(text)
+
+        # we try to find chains of words starting with uppercase
+        # it helps finding potential product/vendor names
+        for chain in find_upper_keywords_chains(tokens):
+            # we append the chain to the list of tokens
+            # Ex: ["Red", "Hat"] would become "RedHat"
+            tokens.append("".join(chain))
+
         low_keywords = dict()
 
         # store keywords and their position
-        for i, tok in enumerate(tokenize_text_lower(text)):
+        for i, tok in enumerate(map(lambda tok: tok.lower(), tokens)):
             if tok not in low_keywords:
                 low_keywords[tok] = set()
             low_keywords[tok].add(i)
@@ -268,9 +316,9 @@ class Db:
             tok_product = list(cpe.tokenize_product())
 
             if is_tokenized_full_match(low_keywords, tok_vendor):
-                score += 10
+                score += 15
             elif is_tokenized_full_match(low_keywords, ["".join(tok_vendor)]):
-                score += 10
+                score += 15
 
             if is_tokenized_full_match(low_keywords, tok_product):
                 score += 10
