@@ -136,6 +136,8 @@ class Db:
 
         for word in words:
             self.pipeline.sadd(Db.word_key(word), cpe_str)
+            # compatibility layer with old guesser data model
+            self._v1_cpe_guesser_word_index(word, cpe_str)
 
     @staticmethod
     def word_key(word: str) -> str:
@@ -152,6 +154,56 @@ class Db:
         if normalize:
             product = CPE.normalize_tokenized_str(iter(tokenize_text_lower(product)))
         return f"product:{product.lower()}"
+
+    def _v1_cpe_guesser_word_index(self, word: str, cpe_str: str):
+        self.pipeline.zadd(self.v1_word_rank_key(word), {cpe_str: 1}, incr=True)
+        self.pipeline.zadd(self.v1_rank_key(), {cpe_str: 1}, incr=True)
+
+    @staticmethod
+    def v1_rank_key() -> str:
+        return "rank:cpe"
+
+    @staticmethod
+    def v1_word_rank_key(word: str) -> str:
+        return f"s:{word.lower()}"
+
+    def _v1_word_score(self, word, cpe):
+        score = self.rdb.zscore(self.v1_word_rank_key(word), cpe)
+        return score or 0
+
+    def _v1_rank_score(self, cpe):
+        score = self.rdb.zscore(self.v1_rank_key(), cpe)
+        return score or 0
+
+    def v1_guess_cpe(
+        self, words: list[str], limit: int | None = None
+    ) -> list[tuple[int, str]]:
+        k = []
+        for keyword in words:
+            k.append(self.word_key(keyword))
+
+        if not k:
+            return []
+
+        result = self.rdb.sinter(*k)
+        if not result:
+            return []
+
+        ranked = []
+        lowered_words = [word.lower() for word in words]
+
+        for cpe in result:  # ty:ignore[not-iterable]
+            search_score = sum(self._v1_word_score(word, cpe) for word in lowered_words)
+            rank_score = self._v1_rank_score(cpe)
+            total_score = search_score + rank_score
+            ranked.append((total_score, rank_score, cpe))
+
+        r = [(total_score, cpe) for total_score, _, cpe in sorted(ranked, reverse=True)]
+
+        if limit:
+            r[:limit]
+
+        return r
 
     def search_vendor_exact(self, vendor: str, exact=False):
         return self.rdb.smembers(self.vendor_key(vendor, normalize=True))
