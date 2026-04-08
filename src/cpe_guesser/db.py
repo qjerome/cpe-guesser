@@ -379,11 +379,11 @@ class Db:
 
             for k, vendor_kw in enumerate(tok_vendor[:2]):
                 if vendor_kw in low_keywords:
-                    score += 2 - min(k, 2)
+                    score += 4 - k
 
             for k, prod_kw in enumerate(tok_product[:4]):
                 if prod_kw in low_keywords:
-                    score += 4 - min(k, 4)
+                    score += 3 - min(k, 2)
 
             for tc in cpe.tokenize_category():
                 if tc in low_keywords:
