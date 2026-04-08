@@ -377,17 +377,19 @@ class Db:
             elif is_tokenized_full_match(low_keywords, ["".join(tok_product)]):
                 score += 10
 
-            for k, vendor_kw in enumerate(tok_vendor):
+            for k, vendor_kw in enumerate(tok_vendor[:2]):
                 if vendor_kw in low_keywords:
                     score += 2 - min(k, 2)
 
-            for k, prod_kw in enumerate(tok_product):
+            for k, prod_kw in enumerate(tok_product[:4]):
                 if prod_kw in low_keywords:
                     score += 4 - min(k, 4)
 
             for tc in cpe.tokenize_category():
                 if tc in low_keywords:
                     score += 3
+                    # count category only once
+                    break
 
             cpes[cpe] = score
 
