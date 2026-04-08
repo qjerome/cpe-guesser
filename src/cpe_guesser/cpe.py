@@ -26,7 +26,7 @@ class CPEFormatException(Exception):
 class CPE:
     @staticmethod
     def tokenize_cpe_str(s: str) -> Iterator[str]:
-        return filter(lambda s: len(s) > 0, TOKENIZE_RE.split(s))
+        return filter(lambda s: len(s) > 0, TOKENIZE_RE.split(s.lower()))
 
     @staticmethod
     def normalize_str(s: str) -> str:
