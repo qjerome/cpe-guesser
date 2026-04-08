@@ -21,6 +21,14 @@ def main():
 
     parser.add_argument("-v", "--vendor", type=str, help="Vendor to search for")
     parser.add_argument("-p", "--product", type=str, help="Product to search for")
+    parser.add_argument(
+        "-V",
+        "--version",
+        type=int,
+        choices=[1, 2],
+        default=2,
+        help="Version of the guessing function.",
+    )
 
     parser.add_argument(
         "word",
@@ -51,16 +59,27 @@ def main():
 
     db = Db(vdb)
 
-    print(
-        json.dumps(
-            db.search_abritrary_text(
-                "\n".join(args.word),
-                vendor=args.vendor,
-                product=args.product,
-                limit=None if args.all else args.limit,
+    if args.version == 1:
+        print(
+            json.dumps(
+                db.v1_guess_cpe(
+                    args.word,
+                    limit=None if args.all else args.limit,
+                )
             )
         )
-    )
+
+    else:
+        print(
+            json.dumps(
+                db.search_abritrary_text(
+                    "\n".join(args.word),
+                    vendor=args.vendor,
+                    product=args.product,
+                    limit=None if args.all else args.limit,
+                )
+            )
+        )
 
 
 if __name__ == "__main__":
