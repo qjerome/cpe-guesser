@@ -201,7 +201,7 @@ class Db:
         r = [(total_score, cpe) for total_score, _, cpe in sorted(ranked, reverse=True)]
 
         if limit:
-            r[:limit]
+            r = r[:limit]
 
         return r
 
