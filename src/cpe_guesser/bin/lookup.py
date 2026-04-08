@@ -58,6 +58,9 @@ def main():
     )
 
     db = Db(vdb)
+    
+    if args.unique:
+        args.limit = 1
 
     if args.version == 1:
         print(
