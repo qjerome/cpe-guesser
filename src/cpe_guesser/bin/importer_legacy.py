@@ -58,7 +58,7 @@ def main():
         print(f"Warning! The Redis database already has {rdb.dbsize()} keys.")
         print("Use --replace if you want to flush the database and repopulate it.")
         sys.exit(0)
-
+    
     if args.download or not os.path.isfile(cpe_path):
         downloader = CPEDownloader(url=cpe_source, dest_path=cpe_path)
         try:
