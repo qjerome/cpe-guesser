@@ -6,6 +6,12 @@ from valkey.client import Pipeline
 from cpe_guesser.cpe import CPE, TOKENIZE_RE
 
 
+class DbException(Exception):
+    """Base exception for database-related errors."""
+
+    pass
+
+
 def tokenize_text(text: str) -> list[str]:
     """
     Tokenizes text into words by splitting on whitespace and punctuation.
@@ -122,6 +128,18 @@ class Db:
         self.commit()
 
     def insert_pipeline(self, cpe: CPE, skip_prod_version=True):
+        if not cpe.is_strict():
+            raise DbException("Only strict CPEs can be inserted into the database")
+
+        # strict CPE all have a UUID
+        uuid_bytes: bytes = cpe.uuid.bytes  # ty:ignore[unresolved-attribute]
+
+        # we don't store twice the exact same CPE otherwise it may lead
+        # to wrong guessing. This is needed as soon as we try to ingest
+        # CPEs from different sources.
+        if self.rdb.sismember(self.history_key(), uuid_bytes):  # ty:ignore[invalid-argument-type]
+            return
+
         words: set[str] = set()
         cpe_str = cpe.to_cpe_str(strip_prod_version=skip_prod_version)
 
@@ -138,6 +156,14 @@ class Db:
             self.pipeline.sadd(Db.word_key(word), cpe_str)
             # compatibility layer with old guesser data model
             self._v1_cpe_guesser_word_index(word, cpe_str)
+
+        # strict CPE all have a UUID
+        if cpe.uuid:
+            self.pipeline.sadd(self.history_key(), cpe.uuid.bytes)
+
+    @staticmethod
+    def history_key() -> str:
+        return "cpe-history"
 
     @staticmethod
     def word_key(word: str) -> str:

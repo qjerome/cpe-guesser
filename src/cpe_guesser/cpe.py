@@ -9,12 +9,14 @@ Classes:
 import re
 import string
 from typing import Iterator
+from uuid import UUID, uuid5
 
 from packaging import version
 from packaging.version import InvalidVersion, Version
 
 RE_VERSION = re.compile(r"(\d+\.\d+(\.\d+)?)")
 TOKENIZE_RE = re.compile(rf"[\s{string.punctuation}\\]")
+CPE_NAMESPACE = UUID("5c8c2363-266d-4f58-9815-22a841ac7e55")
 
 
 class CPEFormatException(Exception):
@@ -35,6 +37,36 @@ class CPE:
     @staticmethod
     def normalize_tokenized_str(s: Iterator[str]) -> str:
         return "-".join(s)
+
+    @staticmethod
+    def uuid5(full_cpe_str: str) -> UUID:
+        return uuid5(CPE_NAMESPACE, full_cpe_str)
+
+    @staticmethod
+    def split(cpe_str: str) -> list[str]:
+        """
+        CPE can contain escaped characters (including ':') in its fields. So this
+        causes dummy split by ':' to fail. This method handles escaped characters
+        properly.
+        """
+        out = []
+        tmp = []
+        escape_next = False
+        for c in cpe_str:
+            if c == "\\" and not escape_next:
+                escape_next = True
+                continue
+            if c == ":":
+                if not escape_next:
+                    out.append("".join(tmp))
+                    tmp.clear()
+                    continue
+            tmp.append(c)
+            escape_next = False
+
+        if len(tmp) > 0:
+            out.append("".join(tmp))
+        return out
 
     """
     Represents a CPE (Common Platform Enumeration) entry.
@@ -57,6 +89,7 @@ class CPE:
         vendor: str,
         product: str,
         product_version: str | None,
+        uuid: UUID | None = None,
     ):
         """
         Initializes a new CPE instance.
@@ -72,6 +105,7 @@ class CPE:
         self.vendor = vendor
         self.product = product
         self.product_version = product_version
+        self.uuid = uuid
 
     def to_cpe_str(self, strip_prod_version=False) -> str:
         """
@@ -157,6 +191,45 @@ class CPE:
             return []
 
     @staticmethod
+    def parse_strict(raw_cpe_line: str) -> "CPE":
+        """
+        Parse a strict CPE 2.3 string into a CPE object.
+
+        Strict parsing validates that the CPE string follows the exact CPE 2.3
+        format with all 13 components present.
+
+        Args:
+            raw_cpe_line: A CPE 2.3 string in strict format
+                (e.g., "cpe:2.3:a:vendor:product:version:*:*:*:*:*:*:*").
+
+        Returns:
+            A CPE object constructed from the parsed string.
+
+        Raises:
+            CPEFormatException: If the string is not a valid strict CPE 2.3 string.
+                Raised when:
+                - First component is not "cpe"
+                - Version is not "2.3"
+                - String does not have exactly 13 components
+        """
+
+        sp = CPE.split(raw_cpe_line)
+
+        if sp[0] != "cpe":
+            raise CPEFormatException(
+                "Invalid CPE format: expected 'cpe' as the first component"
+            )
+
+        if sp[1] != "2.3":
+            raise CPEFormatException(f"Unsupported CPE version {sp[1]}")
+
+        if len(sp) != 13:
+            raise CPEFormatException(f"Invalid strict CPE format: {raw_cpe_line}")
+
+        uuid = CPE.uuid5(raw_cpe_line)
+        return CPE(sp[1], sp[2], sp[3], sp[4], sp[5], uuid)
+
+    @staticmethod
     def parse(raw_cpe_line: str) -> "CPE":
         """
         Parses a raw CPE string and creates a new CPE object.
@@ -178,12 +251,15 @@ class CPE:
             >>> cpe.version
             "2.3"
         """
-        sp = raw_cpe_line.split(":")
+        sp = CPE.split(raw_cpe_line)
 
         if sp[0] != "cpe":
             raise CPEFormatException(
                 "Invalid CPE format: expected 'cpe' as the first component"
             )
+
+        if sp[1] != "2.3":
+            raise CPEFormatException(f"Unsupported CPE version {sp[1]}")
 
         if len(sp) < 5:
             raise CPEFormatException(
@@ -192,7 +268,14 @@ class CPE:
 
         product_version = sp[5] if len(sp) >= 6 else None
 
-        return CPE(sp[1], sp[2], sp[3], sp[4], product_version)
+        # sometimes we need to sanitize category
+        # https://github.com/cisagov/vulnrichment/blob/8607a09304bfa4313fbeea2f2762f51b16718d30/2026/3xxx/CVE-2026-3632.json#L77
+        category = TOKENIZE_RE.sub("", sp[2]) if len(sp[2]) > 1 else sp[2]
+
+        return CPE(sp[1], category, sp[3], sp[4], product_version)
+
+    def is_strict(self) -> bool:
+        return self.uuid is not None
 
     def parse_product_version(self) -> None | Version:
         """
