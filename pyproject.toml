@@ -13,13 +13,13 @@ dependencies = [
   "valkey[libvalkey]>=6.1.1",
 ]
 
-[build-system]
-requires = ["uv_build>=0.9.26,<0.10.0"]
-build-backend = "uv_build"
-
 [project.scripts]
 cpe-extract = "cpe_guesser.bin.extract:main"
 cpe-import = "cpe_guesser.bin.importer:main"
 cpe-import-legacy = "cpe_guesser.bin.importer_legacy:main"
 cpe-lookup = "cpe_guesser.bin.lookup:main"
 cpe-server = "cpe_guesser.bin.server:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
