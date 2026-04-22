@@ -1,8 +1,8 @@
 services:
-  server:
+  cpe-guesser:
     container_name: cpe-guesser
     image: cpe-guesser:1.0
-    build: ..
+    build: .
     volumes:
       - ../data/:/data/:rw
     ports:
