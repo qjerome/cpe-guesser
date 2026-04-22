@@ -215,6 +215,9 @@ class CPE:
 
         sp = CPE.split(raw_cpe_line)
 
+        if len(sp) == 0:
+            raise CPEFormatException("Invalid CPE format: empty CPE")
+
         if sp[0] != "cpe":
             raise CPEFormatException(
                 "Invalid CPE format: expected 'cpe' as the first component"
@@ -252,6 +255,9 @@ class CPE:
             "2.3"
         """
         sp = CPE.split(raw_cpe_line)
+
+        if len(sp) == 0:
+            raise CPEFormatException("Invalid CPE format: empty CPE")
 
         if sp[0] != "cpe":
             raise CPEFormatException(
