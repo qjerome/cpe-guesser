@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 import argparse
+import gzip
 import os
+import shutil
 import sys
 import urllib.error
+import urllib.request
 from typing import Iterator
 from urllib.parse import urlparse
 
@@ -11,7 +14,6 @@ from dynaconf import Dynaconf
 from valkey.client import Valkey
 
 from cpe_guesser.cpe import CPE
-from cpe_guesser.cpeimport.downloader import CPEDownloader
 from cpe_guesser.cpeimport.reader import CPEReader
 from cpe_guesser.cpeimport.reader.generic import GenericCPEReader, line_generator
 from cpe_guesser.cpeimport.reader.nvd_json import NVDCPEReader
@@ -102,7 +104,7 @@ def main():
 
     rdb = valkey.Valkey(host=valkey_host, port=valkey_port, db=valkey_db)
 
-    cpe_file = args.CPE_FILE_OR_URL
+    cpe_file_or_url = args.CPE_FILE_OR_URL
 
     if not args.replace and dbsize(rdb) > 0 and not args.force:
         print(f"Warning! The Redis database already has {rdb.dbsize()} keys.")
@@ -113,34 +115,34 @@ def main():
         print(f"Flushing {rdb.dbsize()} keys from the database...")
         rdb.flushdb()
 
-    if args.download:
-        dest_path = os.path.join(
-            download_path, os.path.basename(urlparse(cpe_file).path)
+    if cpe_file_or_url.startswith("http://") or cpe_file_or_url.startswith("https://"):
+        dest_path: str = os.path.join(
+            download_path, os.path.basename(urlparse(cpe_file_or_url).path)
         )
+        uncompress_path = dest_path.rstrip(".gz")
+        if args.download:
+            print(f"Downloading: {cpe_file_or_url}")
+            urllib.request.urlretrieve(cpe_file_or_url, dest_path)
+        cpe_file_or_url: str = dest_path
+        if dest_path.endswith(".gz") and os.path.isfile(dest_path):
+            print(f"Uncompressing {dest_path} ...")
+            with gzip.open(dest_path, "rb") as f_in:
+                with open(uncompress_path, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            os.remove(dest_path)
+        cpe_file_or_url = uncompress_path
 
-        downloader = CPEDownloader(url=args.CPE_FILE_OR_URL, dest_path=dest_path)
-        try:
-            cpe_file = downloader.download(force=args.download)
-        except (
-            urllib.error.HTTPError,
-            urllib.error.URLError,
-            FileNotFoundError,
-            PermissionError,
-        ) as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-
-    if cpe_file == "-":
+    if cpe_file_or_url == "-":
         print("Using stdin ...")
     else:
-        print(f"Using existing file {cpe_file} ...")
+        print(f"Using existing file {cpe_file_or_url} ...")
 
     print("Populating the database (please be patient)...")
 
     if args.format == FORMAT_NVD_JSON:
         with Db(rdb) as db:
             processed: set[str] = set()
-            reader: CPEReader = NVDCPEReader(cpe_file)
+            reader: CPEReader = NVDCPEReader(cpe_file_or_url)
             n_cpes = 0
             for cpe in reader.read_cpes():
                 if reader.processing_file not in processed:
@@ -155,22 +157,22 @@ def main():
             db.commit()
     elif args.format == FORMAT_ND_CPE:
         with Db(rdb) as db:
-            if cpe_file == "-":
+            if cpe_file_or_url == "-":
                 generic_insert_cpe_str(db, line_generator(sys.stdin))
             else:
-                with open(cpe_file) as fd:
+                with open(cpe_file_or_url) as fd:
                     generic_insert_cpe_str(db, line_generator(fd))
     elif args.format == FORMAT_ANY_TEXT:
         with Db(rdb) as db:
-            if cpe_file == "-":
+            if cpe_file_or_url == "-":
                 reader = GenericCPEReader("stdin", text_io=sys.stdin)
             else:
-                reader = GenericCPEReader(cpe_file)
+                reader = GenericCPEReader(cpe_file_or_url)
 
             generic_insert_cpe(db, reader.read_cpes())
 
     else:
-        print(f"Error! No handler for the file type of {cpe_file}")
+        print(f"Error! No handler for the file type of {cpe_file_or_url}")
         sys.exit(1)
 
     print(f"Done! {rdb.dbsize()} keys inserted.")
