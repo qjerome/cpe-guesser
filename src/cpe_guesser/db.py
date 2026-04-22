@@ -244,7 +244,7 @@ class Db:
         """
 
         # search by exact vendor
-        out: set[str] = set(self.rdb.smembers(Db.vendor_key(vendor, normalize=True)))  # ty:ignore[invalid-argument-type]
+        out: set[str] = set(self.rdb.smembers(Db.vendor_key(vendor, normalize=True)))  # ty:ignore[invalid-argument-type, invalid-assignment]
 
         # we find by exact vendor so we can return
         if len(out) > 0:
@@ -253,7 +253,7 @@ class Db:
         # search by joined vendor name
         out: set[str] = set(
             self.rdb.smembers(Db.vendor_key(TOKENIZE_RE.sub("", vendor)))  # ty:ignore[invalid-argument-type]
-        )
+        )  # ty:ignore[invalid-assignment]
 
         if len(out) > 0:
             return set(map_str_to_cpe(out))
@@ -270,7 +270,7 @@ class Db:
         """
 
         # search by exact product
-        out: set[str] = set(self.rdb.smembers(Db.product_key(product, normalize=True)))  # ty:ignore[invalid-argument-type]
+        out: set[str] = set(self.rdb.smembers(Db.product_key(product, normalize=True)))  # ty:ignore[invalid-argument-type, invalid-assignment]
 
         # we find by exact product so we can return
         if len(out) > 0:
@@ -279,7 +279,7 @@ class Db:
         # search by joined product name
         out: set[str] = set(
             self.rdb.smembers(Db.product_key(TOKENIZE_RE.sub("", product)))  # ty:ignore[invalid-argument-type]
-        )
+        )  # ty:ignore[invalid-assignment]
 
         if len(out) > 0:
             return set(map_str_to_cpe(out))
