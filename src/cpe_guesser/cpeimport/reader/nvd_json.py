@@ -76,4 +76,4 @@ class NVDCPEReader(CPEReader):
         if not cpe_line:
             return
         self.n_cpe_read += 1
-        return CPE.parse(cpe_line)
+        return CPE.parse_strict(cpe_line)
