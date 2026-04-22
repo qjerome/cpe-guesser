@@ -30,7 +30,7 @@ FORMAT_ANY_TEXT = "any-text"
 
 # Configuration
 settings = Dynaconf(settings_files=["../config/settings.yaml"])
-download_path = settings.get("download.path", "./data")
+downloads_path = settings.get("downloads.path", "./data")
 valkey_host = settings.get("valkey.host", "127.0.0.1")
 valkey_port = settings.get("valkey.port", 6666)
 valkey_db = settings.get("valkey.db", 8)
@@ -117,7 +117,7 @@ def main():
 
     if cpe_file_or_url.startswith("http://") or cpe_file_or_url.startswith("https://"):
         dest_path: str = os.path.join(
-            download_path, os.path.basename(urlparse(cpe_file_or_url).path)
+            downloads_path, os.path.basename(urlparse(cpe_file_or_url).path)
         )
         uncompress_path = dest_path.rstrip(".gz")
         if args.download:
