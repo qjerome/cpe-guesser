@@ -3,15 +3,35 @@ import argparse
 import os
 import sys
 import urllib.error
+from typing import Iterator
+from urllib.parse import urlparse
 
 import valkey
 from dynaconf import Dynaconf
 from valkey.client import Valkey
 
+from cpe_guesser.cpe import CPE
 from cpe_guesser.cpeimport.downloader import CPEDownloader
 from cpe_guesser.cpeimport.reader import CPEReader
+from cpe_guesser.cpeimport.reader.generic import GenericCPEReader, line_generator
 from cpe_guesser.cpeimport.reader.nvd_json import NVDCPEReader
 from cpe_guesser.db import Db
+
+DEFAULT_CPE_BATCH_SIZE = 20_000
+
+# NVD JSON format
+FORMAT_NVD_JSON = "nvd-json"
+# New line delimited CPE string
+FORMAT_ND_CPE = "nd-cpe"
+# Any text
+FORMAT_ANY_TEXT = "any-text"
+
+# Configuration
+settings = Dynaconf(settings_files=["../config/settings.yaml"])
+download_path = settings.get("download.path", "./data")
+valkey_host = settings.get("valkey.host", "127.0.0.1")
+valkey_port = settings.get("valkey.port", 6666)
+valkey_db = settings.get("valkey.db", 8)
 
 
 def dbsize(rdb: Valkey) -> int:
@@ -21,46 +41,84 @@ def dbsize(rdb: Valkey) -> int:
     return 0
 
 
+def generic_insert_cpe_str(
+    db: Db, cpe_lines: Iterator[str], batch_size=DEFAULT_CPE_BATCH_SIZE
+):
+    generic_insert_cpe(
+        db, map(lambda x: CPE.parse_strict(x), cpe_lines), batch_size=batch_size
+    )
+
+
+def generic_insert_cpe(
+    db: Db, cpe_it: Iterator[CPE], batch_size=DEFAULT_CPE_BATCH_SIZE
+):
+    for i, cpe in enumerate(cpe_it):
+        db.insert_pipeline(cpe)
+        if i % batch_size == 0:
+            print(f"Inserted {i} cpes")
+            db.commit()
+    # we need to commit the last batch
+    db.commit()
+    print(f"Total CPEs inserted: {i}")
+
+
 def main():
-    argparser = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="Initializes the Redis database with CPE dictionary."
     )
-    argparser.add_argument(
+    parser.add_argument(
         "--download",
         "-d",
         action="store_true",
         default=False,
         help="Download the CPE dictionary even if it already exists.",
     )
-    argparser.add_argument(
+
+    parser.add_argument(
+        "--format",
+        "-f",
+        choices=[FORMAT_NVD_JSON, FORMAT_ND_CPE, FORMAT_ANY_TEXT],
+        help="Input format for data",
+    )
+
+    parser.add_argument("--force", action="store_true", help="Force data insertion")
+
+    parser.add_argument(
         "--replace",
         "-r",
         action="store_true",
         default=False,
         help="Flush and repopulated the CPE database.",
     )
-    args = argparser.parse_args()
 
-    # Configuration
-    settings = Dynaconf(settings_files=["../config/settings.yaml"])
-    cpe_path = settings.get("cpe.path", "./data/nvdcpe-2.0.tar")
-    cpe_source = settings.get(
-        "cpe.source",
-        "https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.tar.gz",
+    parser.add_argument(
+        "CPE_FILE_OR_URL", type=str, help="File containing CPE data in specified format"
     )
-    valkey_host = settings.get("valkey.host", "127.0.0.1")
-    valkey_port = settings.get("valkey.port", 6666)
-    valkey_db = settings.get("valkey.db", 8)
+
+    args = parser.parse_args()
+
+    if not args.format:
+        parser.error("--format|-f must be specified")
 
     rdb = valkey.Valkey(host=valkey_host, port=valkey_port, db=valkey_db)
 
-    if not args.replace and dbsize(rdb) > 0:
+    cpe_file = args.CPE_FILE_OR_URL
+
+    if not args.replace and dbsize(rdb) > 0 and not args.force:
         print(f"Warning! The Redis database already has {rdb.dbsize()} keys.")
         print("Use --replace if you want to flush the database and repopulate it.")
         sys.exit(0)
 
-    if args.download or not os.path.isfile(cpe_path):
-        downloader = CPEDownloader(url=cpe_source, dest_path=cpe_path)
+    if rdb.dbsize() > 0 and args.replace:  # ty:ignore[unsupported-operator]
+        print(f"Flushing {rdb.dbsize()} keys from the database...")
+        rdb.flushdb()
+
+    if args.download:
+        dest_path = os.path.join(
+            download_path, os.path.basename(urlparse(cpe_file).path)
+        )
+
+        downloader = CPEDownloader(url=args.CPE_FILE_OR_URL, dest_path=dest_path)
         try:
             cpe_file = downloader.download(force=args.download)
         except (
@@ -72,19 +130,14 @@ def main():
             print(f"Error: {e}")
             sys.exit(1)
 
-    elif os.path.isfile(cpe_path):
-        print(f"Using existing file {cpe_path} ...")
-        cpe_file = cpe_path
-
-    if rdb.dbsize() > 0 and args.replace:  # ty:ignore[unsupported-operator]
-        print(f"Flushing {rdb.dbsize()} keys from the database...")
-        rdb.flushdb()
+    if cpe_file == "-":
+        print("Using stdin ...")
+    else:
+        print(f"Using existing file {cpe_file} ...")
 
     print("Populating the database (please be patient)...")
 
-    _, ext = os.path.splitext(cpe_file)
-    ext = ext.lower()
-    if ext == ".tar" or ext == ".json":
+    if args.format == FORMAT_NVD_JSON:
         with Db(rdb) as db:
             processed: set[str] = set()
             reader: CPEReader = NVDCPEReader(cpe_file)
@@ -100,6 +153,22 @@ def main():
                 db.insert_pipeline(cpe)
                 n_cpes += 1
             db.commit()
+    elif args.format == FORMAT_ND_CPE:
+        with Db(rdb) as db:
+            if cpe_file == "-":
+                generic_insert_cpe_str(db, line_generator(sys.stdin))
+            else:
+                with open(cpe_file) as fd:
+                    generic_insert_cpe_str(db, line_generator(fd))
+    elif args.format == FORMAT_ANY_TEXT:
+        with Db(rdb) as db:
+            if cpe_file == "-":
+                reader = GenericCPEReader("stdin", text_io=sys.stdin)
+            else:
+                reader = GenericCPEReader(cpe_file)
+
+            generic_insert_cpe(db, reader.read_cpes())
+
     else:
         print(f"Error! No handler for the file type of {cpe_file}")
         sys.exit(1)
