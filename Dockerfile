@@ -10,6 +10,7 @@ RUN <<EOF
 apk update
 apk add uv
 apk add expect
+apk add curl
 EOF
 
 # Disable development dependencies
@@ -32,11 +33,14 @@ downloads:
 EOF
 
 # entrypoint script
-COPY <<EOF entrypoint.sh
+COPY <<'EOF' entrypoint.sh
 #!/bin/ash
-set -e
+set -eux
 
 unbuffer uv run cpe-import --format nvd-json https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.tar.gz &
+unbuffer uv run cpe-import --force --format any-text https://vulnerability.circl.lu/dumps/cvelistv5.ndjson &
+
+echo "Running cpe-server"
 uv run cpe-server
 EOF
 
