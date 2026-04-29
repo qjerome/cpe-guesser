@@ -3,3 +3,4 @@ data/*.gz
 data/*.tar
 data/*.json
 data/*.xml
+data/

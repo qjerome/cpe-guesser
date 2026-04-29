@@ -1,14 +1,23 @@
 services:
-  server:
+  cpe-guesser:
+    environment:
+      # by default use cached files, if a fresh file download is desired
+      # at every start of the container set this variable to false
+      - CPE_IMPORT_CACHED=true
     container_name: cpe-guesser
     image: cpe-guesser:1.0
-    build: ..
+    build: .
     volumes:
-      - ../data/:/data/:rw
+      - ./data/:/data/:rw
     ports:
+      # we redirect API port
       - 8000:8000
     depends_on:
       - valkey
   valkey:
     container_name: cpe-guesser-db
     image: "valkey/valkey:alpine"
+    volumes:
+      - ./data:/data/:rw
+    # persist valkey database
+    command: ash -c "mkdir -p /data/valkey && valkey-server --dir /data/valkey --save 60 1 --appendonly yes"

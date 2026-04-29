@@ -1,0 +1,8 @@
+server:
+  port: 8000
+valkey:
+  host: 127.0.0.1
+  port: 6379
+  db: 8
+downloads:
+  path: "./data/"

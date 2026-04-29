@@ -4,11 +4,13 @@ FROM alpine:latest
 
 COPY . /app
 
+RUN rm -rf /app/.venv
+
 RUN <<EOF
 apk update
-apk add py3-pip
-pip install pipx
-pipx install --global uv
+apk add uv
+apk add expect
+apk add curl
 EOF
 
 # Disable development dependencies
@@ -19,24 +21,26 @@ WORKDIR /app
 RUN uv sync --locked
 
 # configuration
-COPY <<EOF /app/config/settings.yaml
+COPY <<EOF /app/config/config.yaml
 server:
   port: 8000
 valkey:
   host: valkey
   port: 6379
   db: 8
-cpe:
-  path: '/data/nvdcpe-2.0.tar'
-  source: 'https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.tar.gz'
+downloads:
+    path: '/data/'
 EOF
 
 # entrypoint script
-COPY <<EOF entrypoint.sh
+COPY <<'EOF' entrypoint.sh
 #!/bin/ash
-set -e
+set -eux
 
-uv run cpe-import
+unbuffer uv run cpe-import --format nvd-json https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.tar.gz &
+unbuffer uv run cpe-import --force --format any-text https://vulnerability.circl.lu/dumps/cvelistv5.ndjson &
+
+echo "Running cpe-server"
 uv run cpe-server
 EOF
 
