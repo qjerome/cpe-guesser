@@ -133,7 +133,7 @@ def main():
         "-r",
         action="store_true",
         default=False,
-        help="Flush and repopulated the CPE database.",
+        help="Flush and repopulate the CPE database.",
     )
 
     parser.add_argument(
