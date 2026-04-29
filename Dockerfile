@@ -21,7 +21,7 @@ WORKDIR /app
 RUN uv sync --locked
 
 # configuration
-COPY <<EOF /app/config/settings.yaml
+COPY <<EOF /app/config/config.yaml
 server:
   port: 8000
 valkey:

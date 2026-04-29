@@ -5,18 +5,26 @@ import json
 import valkey
 from dynaconf import Dynaconf
 
+from cpe_guesser.bin.default import (
+    DEFAULT_CONFIG_SEARCH_LOCATIONS,
+    DEFAULT_VALKEY_DB,
+    DEFAULT_VALKEY_HOST,
+    DEFAULT_VALKEY_PORT,
+)
 from cpe_guesser.db import Db
-
-# Configuration
-settings = Dynaconf(settings_files=["../config/settings.yaml"])
-valkey_host = settings.get("valkey.host", "127.0.0.1")
-valkey_port = settings.get("valkey.port", 6379)
-valkey_db = settings.get("valkey.db", 8)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Find potential CPE names from a list of keyword(s) and return a JSON of the results"
+        description="Find potential CPE names from a list of keyword(s) and return a JSON of the results",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        help=f"Path to a custom configuration file. If this is unspecified configuration will be read from the first existing file of: {', '.join(DEFAULT_CONFIG_SEARCH_LOCATIONS)}",
     )
 
     parser.add_argument("-v", "--vendor", type=str, help="Vendor to search for")
@@ -53,12 +61,22 @@ def main():
 
     args = parser.parse_args()
 
+    # Configuration
+    settings = Dynaconf(
+        settings_files=DEFAULT_CONFIG_SEARCH_LOCATIONS
+        if not args.config
+        else [args.config]
+    )
+    valkey_host = settings.get("valkey.host", DEFAULT_VALKEY_HOST)
+    valkey_port = settings.get("valkey.port", DEFAULT_VALKEY_PORT)
+    valkey_db = settings.get("valkey.db", DEFAULT_VALKEY_DB)
+
     vdb = valkey.Valkey(
         host=valkey_host, port=valkey_port, db=valkey_db, decode_responses=True
     )
 
     db = Db(vdb)
-    
+
     if args.unique:
         args.limit = 1
 

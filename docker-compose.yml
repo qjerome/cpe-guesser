@@ -10,6 +10,7 @@ services:
     volumes:
       - ./data/:/data/:rw
     ports:
+      # we redirect API port
       - 8000:8000
     depends_on:
       - valkey

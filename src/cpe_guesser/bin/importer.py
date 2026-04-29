@@ -14,6 +14,13 @@ import valkey
 from dynaconf import Dynaconf
 from valkey.client import Valkey
 
+from cpe_guesser.bin.default import (
+    DEFAULT_CONFIG_SEARCH_LOCATIONS,
+    DEFAULT_DOWNLOAD_PATH,
+    DEFAULT_VALKEY_DB,
+    DEFAULT_VALKEY_HOST,
+    DEFAULT_VALKEY_PORT,
+)
 from cpe_guesser.cpe import CPE
 from cpe_guesser.cpeimport.reader import CPEReader
 from cpe_guesser.cpeimport.reader.generic import GenericCPEReader, line_generator
@@ -35,13 +42,6 @@ FILE_KIND_GZ = "gz"
 FILE_KIND_UNKNOWN = "unknown"
 
 CPE_IMPORT_CACHED_ENV_VAR = "CPE_IMPORT_CACHED"
-
-# Configuration
-settings = Dynaconf(settings_files=["../config/settings.yaml"])
-downloads_path = settings.get("downloads.path", "./data")
-valkey_host = settings.get("valkey.host", "127.0.0.1")
-valkey_port = settings.get("valkey.port", 6666)
-valkey_db = settings.get("valkey.db", 8)
 
 
 def dbsize(rdb: Valkey) -> int:
@@ -102,7 +102,15 @@ def generic_insert_cpe(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Initializes the Redis database with CPE dictionary."
+        description="Initializes the Redis database with CPE dictionary.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        help=f"Path to a custom configuration file. If this is unspecified configuration will be read from the first existing file of: {', '.join(DEFAULT_CONFIG_SEARCH_LOCATIONS)}",
     )
 
     parser.add_argument(
@@ -140,6 +148,17 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Configuration
+    settings = Dynaconf(
+        settings_files=DEFAULT_CONFIG_SEARCH_LOCATIONS
+        if not args.config
+        else [args.config]
+    )
+    downloads_path = settings.get("downloads.path", DEFAULT_DOWNLOAD_PATH)
+    valkey_host = settings.get("valkey.host", DEFAULT_VALKEY_HOST)
+    valkey_port = settings.get("valkey.port", DEFAULT_VALKEY_PORT)
+    valkey_db = settings.get("valkey.db", DEFAULT_VALKEY_DB)
 
     if not args.format:
         parser.error("--format|-f must be specified")
