@@ -1,218 +1,243 @@
-# CPE guesser
+# CPE Guesser
 
-CPE Guesser is a command-line tool or web service designed to guess the CPE name based on one or more keywords. The resulting CPE can then be used with tools like [cve-search](https://github.com/cve-search/cve-search) or [vulnerability-lookup](https://github.com/cve-search/vulnerability-lookup) to perform actual searches using CPE names.
+CPE Guesser is a command-line tool or web service designed to guess the CPE (Common Platform Enumeration) name based on one or more keywords. The resulting CPE can then be used with tools like [cve-search](https://github.com/cve-search/cve-search) or [vulnerability-lookup](https://github.com/cve-search/vulnerability-lookup) to perform actual searches using CPE names.
 
 ## Requirements
 
-- [Valkey](https://valkey.io/)
-- Python
+- [Valkey](https://valkey.io/) (Redis-compatible)
+- Python >= 3.13
+
+## Installation
+
+### Using uv
+
+```bash
+uv tool install git+https://github.com/cve-search/cpe-guesser.git
+```
+
+### Using pip
+
+```bash
+pip install git+https://github.com/cve-search/cpe-guesser.git
+```
+
+## Configuration
+
+Default configuration:
+- Valkey: `127.0.0.1:6379` database 8
+- API server port: 8000
+- Download path: `./data/`
+
+If you need a custom configuration, copy the [settings file](./config/config.yaml) to one of the default's search locations
+or use `--config` switch.
 
 ## Usage
 
-To use CPE Guesser, you need to initialize the [Valkey](https://valkey.io/) database with `import.py`.
+### Quick Start
 
-Once initialized, you can use the software with `lookup.py` to find the most probable CPE matching the provided keywords.
+For this to work you will need to have a running Redis protocol compatible database running on the address and port
+configured in **configuration file**.
 
-Alternatively, you can call the web server (after running `server.py`). For example:
+1. **Initialize the database** with CPE dictionary:
+   ```bash
+   # This will used a cached version of the file if it exists or download it otherwise
+   cpe-import --cached -f nvd-json https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.tar.gz
+   ```
+
+2. **Query via CLI**:
+   ```bash
+   cpe-lookup tomcat
+   # query with keywords
+   cpe-lookup --unique microsoft sql server
+   # query by vendor and product
+   cpe-lookup -v microsoft -p outlook --limit 5
+   ```
+
+3. **Start the web server**:
+   ```bash
+   cpe-server
+   ```
+
+### CLI Tools
+
+| Command | Description |
+|---------|-------------|
+| `cpe-import` | Import CPE data from NVD JSON, newline-delimited CPE, or any text |
+| `cpe-extract` | Extract CPE strings from arbitrary text files using regex |
+| `cpe-lookup` | Query CPE database from command line |
+| `cpe-server` | Start HTTP API server |
+
+#### cpe-import
+
+Imports CPE data into the database
 
 ```bash
-curl -s -X POST http://localhost:8000/search -d '{"query": ["tomcat"]}' | jq .
+# Download and import NVD JSON feed
+cpe-import --cached -f nvd-json https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.tar.gz
+
+# Import from local file
+cpe-import -f nvd-json ./data/nvdcpe-2.0.json
+
+# Import newline-delimited CPE strings
+cpe-import -f nd-cpe one_cpe_per_line.txt
+
+# Import from any text file (auto-detects CPE strings)
+cpe-import -f any-text arbitrary_text.txt
+
+# Replace existing database
+cpe-import --cached -f nvd-json https://nvd.nist.gov/feeds/json/cpe/2.0/nvdcpe-2.0.tar.gz
 ```
 
-### Installation
+#### cpe-extract
 
-1. `git clone https://github.com/cve-search/cpe-guesser.git`
-2. `cd cpe-guesser`
-3. Download the CPE dictionary & populate the database with `python3 ./bin/import.py`.
-4. Take a cup of black or green tea ().
-5. `python3 ./bin/server.py` to run the local HTTP server.
-
-If you don't want to install it locally, there is a public online version. Check below.
-
-### Docker
-
-#### Single image with existing Valkey 
+Extract CPE 2.3 strings from any text input:
 
 ```bash
-docker build . -t cpe-guesser:l.0
-# Edit settings.yaml content and/or path
-docker run cpe-guesser:l.0 -v $(pwd)/config/settings.yaml:/app/config/settings.yaml
-# Please wait for full import
+# From a file
+cpe-extract arbitrary_text.txt
+
+# From stdin
+curl -s https://vulnerability.circl.lu/dumps/cvelistv5.ndjson | cpe-extract -
 ```
 
-#### Docker-compose
+#### cpe-lookup
+
+Query the database and return results in json. This is perfect to query a local instance.
 
 ```bash
-cd docker
-# Edit docker/settings.yaml as you want
+# Basic search
+cpe-lookup tomcat
+
+# Multiple keywords
+cpe-lookup microsoft sql server
+
+# Get only the best match
+cpe-lookup --unique tomcat
+
+# Filter by vendor
+cpe-lookup -v microsoft -p outlook
+
+# Limit results
+cpe-lookup --limit 5 nginx
+
+# Show all results
+cpe-lookup --all nginx
+```
+
+#### cpe-server
+
+Start the HTTP API server, using parameters defined in **configuration file**:
+
+```bash
+cpe-server
+```
+
+## HTTP API
+
+The web server provides two API versions:
+
+### v2 API (Recommended)
+
+#### POST /v2/search
+
+Search for CPEs matching keywords.
+
+**Request:**
+```json
+{
+  "query": ["some arbitrary text that will be tokenized", "some other text or keywords"],
+  "vendor": "apache",
+  "product": "tomcat",
+  "limit": 10
+}
+```
+
+**Response:**
+```json
+[
+  [
+    32,
+    "cpe:2.3:a:apache:apache"
+  ],
+  [
+    32,
+    "cpe:2.3:a:apache:tomcat"
+  ]
+]
+```
+
+### v1 API (Legacy)
+
+#### POST /v1/search
+
+Legacy search endpoint with basic keyword matching. 
+
+**Request:**
+```json
+{
+  "query": ["tomcat"],
+  "limit": 5
+}
+```
+
+**Response:** Same format as v2/search.
+
+
+### API Usage
+
+```bash
+# Search
+curl -s -X POST http://localhost:8000/v2/search \
+  -d '{"query": ["openssl", "encrypt"]}' | jq .
+
+# Unique match
+curl -s -X POST http://localhost:8000/v2/search \
+  -d '{"query": ["debian", "linux"], "limit": 1}' | jq .
+
+# Match from arbitrary text
+curl -s -X POST http://localhost:8000/v2/search \
+  -d '{"query": ["A severe vulnerability has been found on Debian Linux"]}' | jq .
+
+# Search by vendor
+curl -s -X POST http://localhost:8000/v2/search \
+  -d '{"vendor": "debian"}' | jq .
+  
+# Search by product
+curl -s -X POST http://localhost:8000/v2/search \
+  -d '{"product": "cron"}' | jq .
+
+# Search by vendor and product
+curl -s -X POST http://localhost:8000/v2/search \
+    -d '{"vendor":"debian", "product": "cron"}' | jq .
+
+# Search by vendor / product and arbitrary text
+curl -s -X POST http://localhost:8000/v2/search \
+    -d '{"vendor":"debian", "query": ["A vulnerability has been found in cron"]}' | jq .
+```
+
+## Containers
+
+### Docker Compose
+
+```bash
 docker-compose up --build -d
-# Please wait for full import
+# Wait for import to complete
 ```
 
-#### Specific usage
-
-If you do not want to use the Web server, `lookup.py` can still be used. Example: `docker exec -it cpe-guesser python3 /app/bin/lookup.py tomcat`
-
-## Public online version
-
-[cpe-guesser.cve-search.org](https://cpe-guesser.cve-search.org) is public online version of CPE guesser which can be used via
-a simple API. The endpoint is `/search` and the JSON is composed of a query list with the list of keyword(s) to search for.
+### Podman Compose
 
 ```bash
-curl -s -X POST https://cpe-guesser.cve-search.org/search -d "{\"query\": [\"outlook\", \"connector\"]}" | jq .
+podman-compose up --build -d
+# Wait for import to complete
 ```
-
-```json
-[
-  [
-    18117,
-    "cpe:2.3:a:microsoft:outlook_connector"
-  ],
-  [
-    60947,
-    "cpe:2.3:a:oracle:oracle_communications_unified_communications_suite_connector_for_microsoft_outlook"
-  ],
-  [
-    68306,
-    "cpe:2.3:a:oracle:corporate_time_outlook_connector"
-  ]
-]
-```
-
-The endpoint `/unique` is available to retrieve only the best-matching CPE entry.
-
-```bash
-curl -s -X POST https://cpe-guesser.cve-search.org/unique -d "{\"query\": [\"outlook\", \"connector\"]}" | jq .
-```
-
-```json
-"cpe:2.3:a:oracle:corporate_time_outlook_connector"
-```
-
-### Command line - `lookup.py`
-
-```text
-usage: lookup.py [-h] [--unique] WORD [WORD ...]
-
-Find potential CPE names from a list of keyword(s) and return a JSON of the results
-
-positional arguments:
-  WORD        One or more keyword(s) to lookup
-
-options:
-  -h, --help  show this help message and exit
-  --unique    Return the best CPE matching the keywords given
-```
-
-```bash
-python3 lookup.py microsoft sql server | jq .
-```
-
-```json
-[
-  [
-    51325,
-    "cpe:2.3:a:microsoft:sql_server_2017_reporting_services"
-  ],
-  [
-    51326,
-    "cpe:2.3:a:microsoft:sql_server_2019_reporting_services"
-  ],
-  [
-    57898,
-    "cpe:2.3:a:quest:intrust_knowledge_pack_for_microsoft_sql_server"
-  ],
-  [
-    60386,
-    "cpe:2.3:o:microsoft:sql_server"
-  ],
-  [
-    60961,
-    "cpe:2.3:a:microsoft:sql_server_desktop_engine"
-  ],
-  [
-    64810,
-    "cpe:2.3:a:microsoft:sql_server_reporting_services"
-  ],
-  [
-    75858,
-    "cpe:2.3:a:microsoft:sql_server_management_studio"
-  ],
-  [
-    77570,
-    "cpe:2.3:a:microsoft:sql_server"
-  ],
-  [
-    78206,
-    "cpe:2.3:a:ibm:tivoli_storage_manager_for_databases_data_protection_for_microsoft_sql_server"
-  ]
-]
-```
-
-## How does this work?
-
-A CPE entry is composed of a human readable name with some references and the structured CPE name.
-
-NVD CPE Dictionary 2.0 JSON feeds:
-
-```json
-    {
-      "cpe": {
-        "deprecated": false,
-        "cpeName": "cpe:2.3:a:10web:form_maker:1.7.17:*:*:*:*:wordpress:*:*",
-        "cpeNameId": "A6F0EC33-CD55-4FE2-8B55-5C0F9CC88BF9",
-        "lastModified": "2019-06-04T16:47:17.300",
-        "created": "2019-06-04T16:47:17.300",
-        "titles": [
-          {
-            "title": "10web Form Maker 1.7.17 for WordPress",
-            "lang": "en"
-          }
-        ],
-        "refs": [
-          {
-            "ref": "https://wordpress.org/plugins/form-maker/#developers",
-            "type": "Change Log"
-          }
-        ]
-      }
-    },
-```
-
-Legacy XML feeds:
-
-```xml
-  <cpe-item name="cpe:/a:10web:form_maker:1.7.17::~~~wordpress~~">
-    <title xml:lang="en-US">10web Form Maker 1.7.17 for WordPress</title>
-    <references>
-      <reference href="https://wordpress.org/plugins/form-maker/#developers">Change Log</reference>
-    </references>
-    <cpe-23:cpe23-item name="cpe:2.3:a:10web:form_maker:1.7.17:*:*:*:*:wordpress:*:*"/>
-  </cpe-item>
-```
-
-The CPE name is structured with a vendor name, a product name and some additional information.
-CPE name can be easily changed due to vendor name or product name changes, some vendor/product are
-sharing common names or name is composed of multiple words.
-
-### Data
-
-Split vendor name and product name (such as `_`) into single word(s) and then canonize the word. Building an inverse index using
-the cpe vendor:product format as value and the canonized word as key.  Then cpe guesser creates a ranked set with the most common
-cpe (vendor:product) per version to give a probability of the CPE appearance.
-
-### Valkey structure
-
-- `w:<word>` set
-- `s:<word>` sorted set with a score depending of the number of appearance
 
 ## License
 
-Software is open source and released under a 2-Clause BSD License
+Software is open source and released under a 2-Clause BSD License.
 
-~~~
-  Copyright (C) 2021-2025 Alexandre Dulaunoy
-  Copyright (C) 2021-2025 Esa Jokinen
-~~~
+```
+Copyright (C) 2021-2025 Alexandre Dulaunoy
+Copyright (C) 2021-2025 Esa Jokinen
+```
 
 We welcome contributions! All contributors collectively own the CPE Guesser project. By contributing, contributors also acknowledge the [Developer Certificate of Origin](https://developercertificate.org/) when submitting pull requests or using other methods of contribution.
