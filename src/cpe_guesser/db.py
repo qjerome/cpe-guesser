@@ -382,7 +382,7 @@ class Db:
                 return []
 
         # if cpes is empty we fallback to text analysis
-        if len(low_keywords) > 0:
+        if len(low_keywords) > 0 and len(cpes) == 0:
             for cpe in map_str_to_cpe(
                 self.rdb.sunion([Db.word_key(k) for k in low_keywords])  # ty:ignore[invalid-argument-type]
             ):
