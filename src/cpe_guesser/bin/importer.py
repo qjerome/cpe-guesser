@@ -4,6 +4,7 @@ import gzip
 import os
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 from typing import Iterator
@@ -28,6 +29,13 @@ FORMAT_ND_CPE = "nd-cpe"
 # Any text
 FORMAT_ANY_TEXT = "any-text"
 
+FILE_KIND_PLAIN = "plain-text"
+FILE_KIND_TAR_GZ = "tar-gz"
+FILE_KIND_GZ = "gz"
+FILE_KIND_UNKNOWN = "unknown"
+
+CPE_IMPORT_CACHED_ENV_VAR = "CPE_IMPORT_CACHED"
+
 # Configuration
 settings = Dynaconf(settings_files=["../config/settings.yaml"])
 downloads_path = settings.get("downloads.path", "./data")
@@ -41,6 +49,34 @@ def dbsize(rdb: Valkey) -> int:
     if isinstance(dbsize, int):
         return dbsize
     return 0
+
+
+def wait_db(rdb: Valkey, timeout_sec: int = 30) -> bool:
+    timeout = time.time() + timeout_sec
+    while time.time() < timeout:
+        try:
+            if rdb.ping():
+                return True
+        except Exception as e:
+            print(f"Waiting database to be ready: {e}")
+        time.sleep(1)
+    return False
+
+
+def str_to_bool(s: str) -> bool:
+    return s.lower() in ["y", "yes", "true", "t", "1"]
+
+
+def file_path_kind(path: str) -> str:
+    if path.endswith(".tar.gz"):
+        kind = FILE_KIND_TAR_GZ
+    elif path.endswith(".gz"):
+        kind = FILE_KIND_GZ
+    elif any((path.endswith(ext) for ext in [".json", ".ndjson", ".txt"])):
+        kind = FILE_KIND_PLAIN
+    else:
+        kind = FILE_KIND_UNKNOWN
+    return kind
 
 
 def generic_insert_cpe_str(
@@ -57,7 +93,7 @@ def generic_insert_cpe(
     for i, cpe in enumerate(cpe_it):
         db.insert_pipeline(cpe)
         if i % batch_size == 0:
-            print(f"Inserted {i} cpes")
+            print(f"Processed {i} cpes")
             db.commit()
     # we need to commit the last batch
     db.commit()
@@ -68,12 +104,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Initializes the Redis database with CPE dictionary."
     )
+
     parser.add_argument(
-        "--download",
-        "-d",
+        "--cached",
         action="store_true",
-        default=False,
-        help="Download the CPE dictionary even if it already exists.",
+        help=f"When processing URL, use cached files in download directory if possible else attempt to download file. If this flag is not specified an attempt to read value from environment variable {CPE_IMPORT_CACHED_ENV_VAR} will be made.",
     )
 
     parser.add_argument(
@@ -94,6 +129,13 @@ def main():
     )
 
     parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Timeout in seconds to wait for the database to be ready",
+    )
+
+    parser.add_argument(
         "CPE_FILE_OR_URL", type=str, help="File containing CPE data in specified format"
     )
 
@@ -102,14 +144,15 @@ def main():
     if not args.format:
         parser.error("--format|-f must be specified")
 
+    if not args.cached and "CPE_IMPORT_CACHED" in os.environ:
+        args.cached = str_to_bool(os.environ["CPE_IMPORT_CACHED"])
+
     rdb = valkey.Valkey(host=valkey_host, port=valkey_port, db=valkey_db)
+    if not wait_db(rdb, args.timeout):
+        print("Database is not available, try later or increase timeout")
+        sys.exit(1)
 
     cpe_file_or_url = args.CPE_FILE_OR_URL
-
-    if not args.replace and dbsize(rdb) > 0 and not args.force:
-        print(f"Warning! The Redis database already has {rdb.dbsize()} keys.")
-        print("Use --replace if you want to flush the database and repopulate it.")
-        sys.exit(0)
 
     if rdb.dbsize() > 0 and args.replace:  # ty:ignore[unsupported-operator]
         print(f"Flushing {rdb.dbsize()} keys from the database...")
@@ -119,18 +162,25 @@ def main():
         dest_path: str = os.path.join(
             downloads_path, os.path.basename(urlparse(cpe_file_or_url).path)
         )
-        uncompress_path = dest_path.rstrip(".gz")
-        if args.download:
-            print(f"Downloading: {cpe_file_or_url}")
-            urllib.request.urlretrieve(cpe_file_or_url, dest_path)
+
+        kind = file_path_kind(dest_path)
+        if kind == FILE_KIND_PLAIN:
+            dest_path = f"{dest_path}.gz"
+
+        if not args.cached or not os.path.isfile(dest_path):
+            print(f"Downloading: {cpe_file_or_url} to {dest_path}")
+            with urllib.request.urlopen(cpe_file_or_url) as response:
+                if kind == FILE_KIND_PLAIN:
+                    # we save a compressed version of the file
+                    with open(dest_path, "wb") as f:
+                        with gzip.GzipFile(fileobj=f, mode="w") as gz:
+                            shutil.copyfileobj(response, gz)
+                else:
+                    # we save file as is
+                    with open(dest_path, "wb") as f:
+                        shutil.copyfileobj(response, f)
+
         cpe_file_or_url: str = dest_path
-        if dest_path.endswith(".gz") and os.path.isfile(dest_path):
-            print(f"Uncompressing {dest_path} ...")
-            with gzip.open(dest_path, "rb") as f_in:
-                with open(uncompress_path, "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-            os.remove(dest_path)
-        cpe_file_or_url = uncompress_path
 
     if cpe_file_or_url == "-":
         print("Using stdin ...")
@@ -139,6 +189,7 @@ def main():
 
     print("Populating the database (please be patient)...")
 
+    cpe_file_kind = file_path_kind(cpe_file_or_url)
     if args.format == FORMAT_NVD_JSON:
         with Db(rdb) as db:
             processed: set[str] = set()
@@ -148,7 +199,7 @@ def main():
                 if reader.processing_file not in processed:
                     db.commit()
                     if n_cpes != 0:
-                        print(f"{n_cpes} CPEs in database")
+                        print(f"NVD importer: processed {n_cpes} CPEs")
                     print(f"processing: {reader.processing_file}")
                     if reader.processing_file is not None:
                         processed.add(reader.processing_file)
@@ -165,11 +216,15 @@ def main():
     elif args.format == FORMAT_ANY_TEXT:
         with Db(rdb) as db:
             if cpe_file_or_url == "-":
-                reader = GenericCPEReader("stdin", text_io=sys.stdin)
+                reader = GenericCPEReader("stdin", stream=sys.stdin)
             else:
-                reader = GenericCPEReader(cpe_file_or_url)
-
-            generic_insert_cpe(db, reader.read_cpes())
+                if cpe_file_kind == FILE_KIND_GZ:
+                    with gzip.GzipFile(cpe_file_or_url, mode="r") as gz:
+                        reader = GenericCPEReader(cpe_file_or_url, stream=gz)
+                        generic_insert_cpe(db, reader.read_cpes())
+                else:
+                    reader = GenericCPEReader(cpe_file_or_url)
+                    generic_insert_cpe(db, reader.read_cpes())
 
     else:
         print(f"Error! No handler for the file type of {cpe_file_or_url}")
