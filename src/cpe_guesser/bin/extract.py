@@ -17,7 +17,7 @@ def main():
 
     for cpe_file in args.CPE_FILES:
         if cpe_file == "-":
-            reader = GenericCPEReader("stdin", text_io=sys.stdin)
+            reader = GenericCPEReader("stdin", stream=sys.stdin)
         else:
             reader = GenericCPEReader(cpe_file)
 
