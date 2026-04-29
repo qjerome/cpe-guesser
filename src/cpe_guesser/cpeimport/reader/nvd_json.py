@@ -12,7 +12,7 @@ class NVDCPEReader(CPEReader):
     Concrete implementation of CPEReader for reading CPEs from NVD JSON files.
     """
 
-    def __init__(self, filepath: Path):
+    def __init__(self, filepath: Path | str):
         self.filepath = filepath
         self.skipped = 0
         self.n_cpe_read = 0
